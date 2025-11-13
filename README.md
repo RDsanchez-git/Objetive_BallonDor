@@ -1,2 +1,4 @@
 # Objetive_BallonDor
-Es un proyecto de ML diseñado para establecer un ranking objetivo de los ganadores del Balón de Oro en el siglo XXI, bajo el supuesto que las elecciones oficiales de los ganadores están plagadas de sesgos y criterios subjetivos. La pregunta fundamental del proyecto consiste en responder si ¿Qué tan merecido fue el premio recibido por el ganador?
+Es un proyecto de ML diseñado para establecer un ranking objetivo de los ganadores del Balón de Oro en el siglo XXI, bajo el supuesto que las elecciones oficiales de los ganadores están plagadas de sesgos y criterios subjetivos. La pregunta fundamental del proyecto consiste en responder: ¿Qué tan merecido fue el premio otorgado en el año X? ¿Cuál fue el más merecido?¿Y el menos?
+
+La idea es utilizar este proyecto como motivación para aprender a realizar análisis de datos, empleando las herramientas de vanguarda de la Ciencia de Datos tales como Python, Docker, MySQL, Power BI y datos del mundo real. Es un desafío muy emocionante que combina mi pasión por el fútbol y las ganas de aprender acerca del mundo de la Ciencia de Datos para responder preguntas de manera robusta y basadas en ciencia.
