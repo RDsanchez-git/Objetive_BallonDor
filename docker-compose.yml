@@ -1,0 +1,60 @@
+services:
+  # Servicio 2: La Base de Datos (Fuente Única de Verdad)
+  db_postgres:
+    image: postgres:14-alpine
+    container_name: meritocr_db
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=adminpass
+      - POSTGRES_DB=meritocr_ai_db
+    ports:
+      - "5432:5432" # Expone el puerto 5432 de tu máquina al contenedor
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql # Ejecuta el script de creación de schema
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - meritocr_net
+
+  # Servicio 1: Ingesta de Datos (Scraping y Carga)
+  ingestion_service:
+    container_name: meritocr_ingestion
+    build:
+      context: ./services/ingestion # Construye desde el Dockerfile en esta carpeta
+    environment:
+      - DB_HOST=db_postgres # Se conecta al servicio 'db_postgres'
+      - DB_PORT=5432
+      - DB_NAME=meritocr_ai_db
+      - DB_USER=admin
+      - DB_PASS=adminpass
+    depends_on:
+      - db_postgres # No arranca hasta que la DB esté lista
+    networks:
+      - meritocr_net
+
+  # Servicio 3: Entrenamiento (Placeholder para Fase 3)
+  ml_training_service:
+    container_name: meritocr_training
+    build:
+      context: ./services/ml_training
+    environment:
+      - DB_HOST=db_postgres
+      - DB_PORT=5432
+      # ... (mismas variables de DB)
+    depends_on:
+      - db_postgres
+    networks:
+      - meritocr_net
+  
+  # Servicio 4: Dashboard API (Placeholder para Fase 4)
+  # (Lo dejamos comentado por ahora hasta que se necesite)
+  # dashboard_service:
+  #   ...
+
+# Red interna para que los contenedores se comuniquen por nombre
+networks:
+  meritocr_net:
+    driver: bridge
+
+# Volumen persistente para que los datos de la DB no se borren
+volumes:
+  postgres_data:

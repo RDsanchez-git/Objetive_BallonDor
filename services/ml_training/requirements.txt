@@ -1,0 +1,7 @@
+# services/ml_training/requirements.txt
+pandas
+sqlalchemy
+psycopg2-binary
+scikit-learn
+lightgbm
+joblib
