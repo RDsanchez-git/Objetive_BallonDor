@@ -8,7 +8,7 @@ services:
       - POSTGRES_PASSWORD=adminpass
       - POSTGRES_DB=meritocr_ai_db
     ports:
-      - "5432:5432" # Expone el puerto 5432 de tu máquina al contenedor
+      - "5435:5432" # Expone el puerto 5432 de tu máquina al contenedor
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql # Ejecuta el script de creación de schema
       - postgres_data:/var/lib/postgresql/data
