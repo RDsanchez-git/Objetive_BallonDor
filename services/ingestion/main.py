@@ -1,118 +1,150 @@
 import os
 import time
+import random
 import pandas as pd
-from sqlalchemy import create_engine, text
+import requests # Necesario para el anti-bloqueo
+from sqlalchemy import create_engine
+import soccerdata as sd
 
-# --- 1. CONEXIÓN A LA BASE DE DATOS ---
-DB_HOST = os.environ.get('DB_HOST')
-DB_PORT = os.environ.get('DB_PORT')
-DB_NAME = os.environ.get('DB_NAME')
-DB_USER = os.environ.get('DB_USER')
-DB_PASS = os.environ.get('DB_PASS')
+# =============================================================================
+# 🛡️ ANTI-BLOQUEO (MONKEY PATCH)
+# Esto obliga a soccerdata a usar una identificación de navegador real
+# =============================================================================
+original_request = requests.Session.request
 
-try:
-    connection_string = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    engine = create_engine(connection_string)
-    print("Conexión a PostgreSQL exitosa.")
-except Exception as e:
-    print(f"Error al conectar a la DB: {e}")
-    exit(1)
-
-# --- 2. PREPARACIÓN DE DATOS MAESTROS (Foreign Keys) ---
-def ensure_master_data_exists(season_year):
-    """
-    Inserta datos falsos en players, teams y seasons para satisfacer las Foreign Keys.
-    En producción, esto se llenaría con datos reales.
-    """
-    with engine.connect() as conn:
-        # 1. Crear Temporada
-        season_id = season_year
-        season_name = f"{season_year}/{season_year+1}"
-        conn.execute(text(f"""
-            INSERT INTO seasons (season_id, season_name) 
-            VALUES ({season_id}, '{season_name}') 
-            ON CONFLICT (season_id) DO NOTHING;
-        """))
-
-        # 2. Crear Jugadores (Player A y Player B)
-        # Usamos IDs simples como 'player_a' para probar
-        conn.execute(text("""
-            INSERT INTO players (player_id, player_name, main_position_group) 
-            VALUES 
-                ('player_a', 'Player A', 'Forward'),
-                ('player_b', 'Player B', 'Midfielder')
-            ON CONFLICT (player_id) DO NOTHING;
-        """))
-
-        # 3. Crear Equipo (Team Test)
-        conn.execute(text("""
-            INSERT INTO teams (team_id, team_name) 
-            VALUES ('team_test', 'Team Test FC')
-            ON CONFLICT (team_id) DO NOTHING;
-        """))
-        
-        conn.commit()
-
-# --- 3. FUNCIONES DE SCRAPING ---
-def scrape_fbref(season_year):
-    print(f"Scrapeando FBref para la temporada {season_year}...")
-    # time.sleep(1) # Reducido para que sea rápido en la prueba
-    
-    # IMPORTANTE: Ahora incluimos los IDs que coinciden con los datos maestros de arriba
-    data = {
-        'player_id': ['player_a', 'player_b'],
-        'season_id': [season_year, season_year],
-        'team_id': ['team_test', 'team_test'],
-        'goals': [10, 20],
-        'xg': [8.5, 22.1],
-        'matches_played': [30, 28],
-        'data_source': ['FBref', 'FBref']
+def patched_request(self, method, url, *args, **kwargs):
+    # Definimos headers de un navegador real
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://fbref.com/'
     }
-    return pd.DataFrame(data)
-
-# --- 4. ORQUESTACIÓN (MAIN) ---
-def main():
-    print("Iniciando el servicio de ingesta...")
+    # Si ya hay headers, los actualizamos; si no, los creamos
+    kwargs.setdefault('headers', {})
+    kwargs['headers'].update(headers)
     
-    # Probemos solo 3 años para que sea rápido
-    seasons_to_scrape = range(2020, 2023) 
+    # Ejecutamos la petición original pero con nuestro "disfraz"
+    return original_request(self, method, url, *args, **kwargs)
+
+# Aplicamos el parche a la librería requests (que usa soccerdata por debajo)
+requests.Session.request = patched_request
+# =============================================================================
+
+
+# --- 1. CONFIGURACIÓN DE ENTORNO ---
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_PORT = os.environ.get('DB_PORT', '5432')
+DB_NAME = os.environ.get('DB_NAME', 'meritocr_ai_db')
+DB_USER = os.environ.get('DB_USER', 'admin')
+DB_PASS = os.environ.get('DB_PASS', 'adminpass')
+
+connection_string = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(connection_string)
+
+# --- 2. PARÁMETROS DEL SCRAPER ---
+LEAGUES = ['ENG-Premier League', 'ESP-La Liga', 'ITA-Serie A', 'GER-Bundesliga', 'FRA-Ligue 1']
+YEARS = ['2023'] # Solo 2023 para probar
+
+def flatten_columns(df):
+    if isinstance(df.columns, pd.MultiIndex):
+        new_cols = []
+        for col in df.columns.values:
+            if col[0]: 
+                new_cols.append(f"{col[0]}_{col[1]}")
+            else:
+                new_cols.append(col[1])
+        df.columns = new_cols
+    return df
+
+def process_season(scraper, league, year):
+    print(f"--> Procesando: {league} | Temporada: {year}")
     
-    all_raw_data = []
-
-    for year in seasons_to_scrape:
-        try:
-            # 1. Asegurar que existen las referencias (FKs)
-            ensure_master_data_exists(year)
-            
-            # 2. Obtener datos
-            df_fbref = scrape_fbref(year)
-            all_raw_data.append(df_fbref)
-
-        except Exception as e:
-            print(f"Error al procesar la temporada {year}: {e}")
-
-    if not all_raw_data:
-        print("No se obtuvieron datos.")
-        return
-
-    final_df = pd.concat(all_raw_data, ignore_index=True)
-
-    # --- 5. CARGA A POSTGRESQL ---
     try:
-        print(f"Cargando {len(final_df)} registros a la tabla 'player_performance_raw'...")
+        # A. STANDARD
+        df_std = scraper.read_player_season_stats(stat_type='standard')
+        df_std = df_std.reset_index()
+        df_std = flatten_columns(df_std)
         
-        # ¡AQUÍ ESTÁ LA CLAVE! Descomentado y funcionando
-        final_df.to_sql(
-            'player_performance_raw', 
-            con=engine, 
-            if_exists='append', # Agrega los datos
-            index=False
-        )
+        cols_std_map = {
+            'player': 'Player', 'nation': 'Nation', 'pos': 'Pos', 'team': 'Squad', 'age': 'Age', 'born': 'Born',
+            'Playing Time_MP': 'MP', 'Playing Time_Starts': 'Starts', 'Playing Time_Min': 'Min',
+            'Performance_Gls': 'Gls', 'Performance_Ast': 'Ast', 'Performance_G+A': 'G_A',
+            'Performance_PK': 'PK', 'Performance_PKatt': 'PKatt',
+            'Performance_CrdY': 'CrdY', 'Performance_CrdR': 'CrdR'
+        }
+        exist_cols = [c for c in cols_std_map.keys() if c in df_std.columns]
+        df_std = df_std[exist_cols].rename(columns=cols_std_map)
         
-        print("¡Carga de datos crudos completada con éxito!")
+        time.sleep(random.uniform(3, 5)) # Pausa un poco más larga
+
+        # B. PORTEROS
+        try:
+            df_gk = scraper.read_player_season_stats(stat_type='keepers')
+            df_gk = df_gk.reset_index()
+            df_gk = flatten_columns(df_gk)
+            
+            cols_gk_map = {
+                'player': 'Player', 'team': 'Squad',
+                'Performance_GA': 'GA', 'Performance_Ga90': 'Ga90',
+                'Performance_SoTA': 'SoTA', 'Performance_Saves': 'Saves',
+                'Performance_Save%': 'Save_Pct', 'Performance_CS': 'CS', 'Performance_CS%': 'CS_Pct'
+            }
+            exist_cols_gk = [c for c in cols_gk_map.keys() if c in df_gk.columns]
+            df_gk = df_gk[exist_cols_gk].rename(columns=cols_gk_map)
+            
+            df_combined = pd.merge(df_std, df_gk, on=['Player', 'Squad'], how='left')
+        except Exception as e:
+            print(f"   [!] Aviso: Saltando porteros: {e}")
+            df_combined = df_std
+
+        time.sleep(random.uniform(3, 5))
+
+        # C. CONTEXTO EQUIPO
+        try:
+            df_table = scraper.read_league_table()
+            df_table = df_table.reset_index()
+            cols_table_map = {'team': 'Squad', 'Rk': 'League_Rank', 'GF': 'Squad_GF', 'GA': 'Squad_GA', 'Pts': 'Squad_Pts'}
+            exist_cols_table = [c for c in cols_table_map.keys() if c in df_table.columns]
+            df_table = df_table[exist_cols_table].rename(columns=cols_table_map)
+            
+            df_final = pd.merge(df_combined, df_table, on='Squad', how='left')
+        except Exception as e:
+            print(f"   [!] Aviso: Saltando tabla posiciones: {e}")
+            df_final = df_combined
+
+        # CARGA
+        df_final['Season_ID'] = int(year)
+        df_final['League_ID'] = league
+        df_final['Min'] = df_final['Min'].fillna(0)
         
+        print(f"   -> Guardando {len(df_final)} registros...")
+        df_final.to_sql('player_performance_real', con=engine, if_exists='append', index=False)
+        return True
+
     except Exception as e:
-        print(f"Error CRÍTICO al cargar datos en la DB: {e}")
+        print(f"!!! ERROR CRÍTICO en {league}: {e}")
+        return False
+
+def main():
+    print(">>> INICIANDO SCRAPER CON MÁSCARA DE NAVEGADOR <<<")
+    # Intentamos limpiar caché corrupta de soccerdata si existe
+    try:
+        import shutil
+        cache_path = os.path.expanduser("~/soccerdata")
+        if os.path.exists(cache_path):
+            print("   Limpiando caché vieja de soccerdata...")
+            shutil.rmtree(cache_path)
+    except:
+        pass
+
+    for year in YEARS:
+        # no_cache=True para forzar el uso de nuestros nuevos headers
+        scraper = sd.FBref(leagues=LEAGUES, seasons=[year], no_cache=True)
+        for league in LEAGUES:
+            process_season(scraper, league, year)
+            time.sleep(random.uniform(5, 8))
+            
+    print(">>> PROCESO COMPLETADO <<<")
 
 if __name__ == "__main__":
     main()
