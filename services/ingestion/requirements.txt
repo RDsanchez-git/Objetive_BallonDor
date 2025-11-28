@@ -1,8 +1,3 @@
 pandas
 sqlalchemy
 psycopg2-binary
-requests
-beautifulsoup4
-soccerdata
-html5lib
-lxml

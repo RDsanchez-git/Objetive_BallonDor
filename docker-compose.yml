@@ -30,6 +30,8 @@ services:
       - db_postgres # No arranca hasta que la DB esté lista
     networks:
       - meritocr_net
+    volumes:
+      - ./services/ingestion:/app #Conecta carpeta con base de datos
 
   # Servicio 3: Entrenamiento (Placeholder para Fase 3)
   ml_training_service:
