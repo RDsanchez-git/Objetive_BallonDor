@@ -29,7 +29,7 @@ def load_clean_file(csv_path):
 
         # Metadata extra si falta
         if 'season_id' not in df.columns:
-            df['season_id'] = 2024
+            df['season_id'] = 2024-2025
 
         print(f"   -> Insertando {len(df)} registros con {len(df.columns)} columnas...")
         
